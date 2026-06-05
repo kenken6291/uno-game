@@ -25,6 +25,7 @@ let myPlayerId = null;
 let currentLobbyTab = 'create';
 let aiCount = 3;
 let activeListeners = []; // リスナー解除用の配列
+let cachedLobbyPlayers = []; // startGame()用のロビープレイヤーキャッシュ
 
 // セッション内での一意なプレイヤーID生成
 myPlayerId = 'usr_' + Math.floor(100000 + Math.random() * 900000);
@@ -135,6 +136,9 @@ function createRoom() {
       gameInstance.localPlayerId = myPlayerId;
       gameInstance.isHost = true;
 
+      // 初期ホストをキャッシュに登録
+      cachedLobbyPlayers = [{ id: myPlayerId, name: hostName, isHost: true }];
+
       // 参加プレイヤーのリスニング開始
       listenToPlayersList();
       // ゲストからのアクションのリスニング開始
@@ -149,6 +153,13 @@ function createRoom() {
       }
       showToast(errorMsg, "warning");
     });
+  }).catch(err => {
+    console.error("Firebase createRoom check error:", err);
+    let errorMsg = "部屋の作成に失敗しました: " + err.message;
+    if (window.location.protocol === 'file:') {
+      errorMsg += " (※ローカルファイル[file://]からはFirebaseの通信が制限される場合があります。簡易サーバー経由で起動するか、GitHub Pages上でお試しください)";
+    }
+    showToast(errorMsg, "warning");
   });
 }
 
@@ -185,6 +196,9 @@ function listenToPlayersList() {
       showToast("接続上限に達したため、新規の接続を拒否しました。");
       return;
     }
+
+    // 人間プレイヤーのみキャッシュ (startGame()で使用)
+    cachedLobbyPlayers = lobbyPlayers.slice();
 
     // AIプレイヤーを追加表示用に入れる
     for (let i = 0; i < aiCount; i++) {
@@ -429,70 +443,21 @@ window.sendActionToHost = sendActionToHost;
 function startGame() {
   if (!gameInstance.isHost) return;
 
-  const roomRef = db.ref(`rooms/${roomId}`);
-  
-  roomRef.once('value').then((snapshot) => {
-    if (!snapshot.exists()) return;
+  // キャッシュ済みのプレイヤーリストを使用 (Firebase読み取りをスキップして即座に開始)
+  const lobbyPlayers = cachedLobbyPlayers.slice();
 
-    const roomData = snapshot.val();
-    const lobbyPlayers = [];
-    const playersData = roomData.players || {};
+  // 4人戦にするため、不足分をAIで補う
+  const needed = 4 - lobbyPlayers.length;
+  for (let i = 0; i < needed; i++) {
+    const idx = lobbyPlayers.filter(p => p.isAI).length + 1;
+    lobbyPlayers.push({ id: `ai_${idx - 1}`, name: `COM ${idx}`, isAI: true });
+  }
 
-    // 人間プレイヤーのリスト作成
-    Object.keys(playersData).forEach(id => {
-      const p = playersData[id];
-      lobbyPlayers.push({
-        id: p.id,
-        name: p.name,
-        isHost: p.id === myPlayerId
-      });
-    });
-
-    // 4人戦にするため、不足分をAIで補う
-    const needed = 4 - lobbyPlayers.length;
-    for (let i = 0; i < needed; i++) {
-      const idx = lobbyPlayers.filter(p => p.isAI).length + 1;
-      lobbyPlayers.push({ id: `ai_${idx - 1}`, name: `COM ${idx}`, isAI: true });
-    }
-
-    // ゲームエンジンの初期化
-    gameInstance.initGame(lobbyPlayers);
-
-    // データベースのメタデータをplayingにし、初回ステートを同期する
-    const batchUpdates = {};
-    batchUpdates[`rooms/${roomId}/metadata/status`] = 'playing';
-    batchUpdates[`rooms/${roomId}/state`] = {
-      deck: gameInstance.deck.map(c => ({ id: c.id, color: c.color, value: c.value })),
-      discardPile: gameInstance.discardPile,
-      players: gameInstance.players,
-      turn: gameInstance.turn,
-      direction: gameInstance.direction,
-      currentColor: gameInstance.currentColor,
-      currentValue: gameInstance.currentValue
-    };
-
-    db.ref().update(batchUpdates).then(() => {
-      // UIの切り替え
-      document.getElementById('lobby-screen').classList.remove('active');
-      document.getElementById('game-screen').classList.add('active');
-      
-      // ローカルのUIも更新
-      renderGameUI(batchUpdates[`rooms/${roomId}/state`]);
-
-      showToast("ゲームを開始しました！");
-
-      // 最初のターンがAIであれば行動開始
-      checkAITurn();
-    });
-  });
-}
-
-// ホストからステートを全員に同期する処理の再定義
-function broadcastGameState() {
-  if (!gameInstance.isHost || !roomId) return;
+  // ゲームエンジンの初期化
+  gameInstance.initGame(lobbyPlayers);
 
   const statePayload = {
-    deck: gameInstance.deck.map(c => ({ id: c.id, color: c.color, value: c.value })),
+    deck: gameInstance.deck.map(c => ({ id: c.id, color: c.color, value: c.value, score: c.score })),
     discardPile: gameInstance.discardPile,
     players: gameInstance.players,
     turn: gameInstance.turn,
@@ -501,9 +466,44 @@ function broadcastGameState() {
     currentValue: gameInstance.currentValue
   };
 
-  db.ref(`rooms/${roomId}/state`).set(statePayload).then(() => {
-    // ローカルUIも同期
-    renderGameUI(statePayload);
+  // UIを即座に切り替え (Firebaseの応答を待たない)
+  document.getElementById('lobby-screen').classList.remove('active');
+  document.getElementById('game-screen').classList.add('active');
+  renderGameUI(statePayload);
+  showToast("ゲームを開始しました！");
+  checkAITurn();
+
+  // ゲスト向けにバックグラウンドでFirebaseへ同期
+  if (roomId) {
+    const batchUpdates = {};
+    batchUpdates[`rooms/${roomId}/metadata/status`] = 'playing';
+    batchUpdates[`rooms/${roomId}/state`] = statePayload;
+    db.ref().update(batchUpdates).catch(err => {
+      console.error("Firebase startGame sync error:", err);
+    });
+  }
+}
+
+// ホストからステートを全員に同期する処理の再定義
+function broadcastGameState() {
+  if (!gameInstance.isHost || !roomId) return;
+
+  const statePayload = {
+    deck: gameInstance.deck.map(c => ({ id: c.id, color: c.color, value: c.value, score: c.score })),
+    discardPile: gameInstance.discardPile,
+    players: gameInstance.players,
+    turn: gameInstance.turn,
+    direction: gameInstance.direction,
+    currentColor: gameInstance.currentColor,
+    currentValue: gameInstance.currentValue
+  };
+
+  // ローカルUIを即座に更新 (Firebaseの応答を待たない)
+  renderGameUI(statePayload);
+
+  // ゲスト向けにバックグラウンドでFirebaseへ同期
+  db.ref(`rooms/${roomId}/state`).set(statePayload).catch(err => {
+    console.error("Firebase broadcast error:", err);
   });
 }
 window.broadcastGameState = broadcastGameState;
