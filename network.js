@@ -89,78 +89,89 @@ function createRoom() {
   const hostName = getPlayerNameInput();
   roomId = Math.floor(100000 + Math.random() * 900000).toString(); // 6桁の数字ID
 
-  showToast("部屋を作成中...");
+  // ゲームエンジン側の設定
+  gameInstance.localPlayerId = myPlayerId;
+  gameInstance.isHost = true;
 
+  // プレイヤーキャッシュを初期化
+  cachedLobbyPlayers = [{ id: myPlayerId, name: hostName, isHost: true }];
+
+  // UIを即座に切り替え (Firebaseの応答を待たない)
+  document.getElementById('tab-create').parentElement.classList.add('hidden');
+  document.getElementById('waiting-room').classList.remove('hidden');
+  document.getElementById('room-status-badge').textContent = "ホスト中";
+  document.getElementById('room-status-badge').className = "badge";
+  document.getElementById('display-room-id').textContent = roomId;
+  document.getElementById('btn-start-game').classList.remove('hidden');
+
+  // 初期プレイヤーリストをAI込みで表示
+  const displayPlayers = [{ id: myPlayerId, name: hostName, isHost: true }];
+  for (let i = 0; i < aiCount; i++) {
+    displayPlayers.push({ id: `ai_${i}`, name: `COM ${i + 1}`, isAI: true });
+  }
+  updateLobbyPlayers(displayPlayers);
+
+  showToast("部屋が作成されました！", "success");
+
+  // 通信対戦用にFirebaseへバックグラウンド同期 (失敗してもAI対戦は可能)
   const roomRef = db.ref(`rooms/${roomId}`);
-  
-  // 部屋IDが重複していないか確認
+  const initialData = {
+    metadata: {
+      hostId: myPlayerId,
+      status: 'lobby',
+      aiCount: aiCount,
+      createdAt: firebase.database.ServerValue.TIMESTAMP
+    },
+    players: {
+      [myPlayerId]: {
+        id: myPlayerId,
+        name: hostName,
+        joinedAt: firebase.database.ServerValue.TIMESTAMP
+      }
+    },
+    state: {},
+    actions: {}
+  };
+
   roomRef.once('value').then((snapshot) => {
     if (snapshot.exists()) {
-      // 重複していた場合は再生成
-      createRoom();
+      // 重複していた場合はIDを再生成してFirebaseのみ再試行
+      roomId = Math.floor(100000 + Math.random() * 900000).toString();
+      document.getElementById('display-room-id').textContent = roomId;
+      createRoomFirebaseSync(hostName);
       return;
     }
-
-    // データベース上の部屋の初期状態を設定
-    const initialData = {
-      metadata: {
-        hostId: myPlayerId,
-        status: 'lobby',
-        aiCount: aiCount,
-        createdAt: firebase.database.ServerValue.TIMESTAMP
-      },
-      players: {
-        [myPlayerId]: {
-          id: myPlayerId,
-          name: hostName,
-          joinedAt: firebase.database.ServerValue.TIMESTAMP
-        }
-      },
-      state: {},
-      actions: {}
-    };
-
     roomRef.set(initialData).then(() => {
-      // ホスト切断時の部屋解散処理 (onDisconnect)
       roomRef.onDisconnect().remove();
-
-      // UI切り替え: 待機室表示
-      document.getElementById('tab-create').parentElement.classList.add('hidden');
-      document.getElementById('waiting-room').classList.remove('hidden');
-      document.getElementById('room-status-badge').textContent = "ホスト中";
-      document.getElementById('room-status-badge').className = "badge";
-      document.getElementById('display-room-id').textContent = roomId;
-      document.getElementById('btn-start-game').classList.remove('hidden');
-
-      // ゲームエンジン側の設定
-      gameInstance.localPlayerId = myPlayerId;
-      gameInstance.isHost = true;
-
-      // 初期ホストをキャッシュに登録
-      cachedLobbyPlayers = [{ id: myPlayerId, name: hostName, isHost: true }];
-
-      // 参加プレイヤーのリスニング開始
       listenToPlayersList();
-      // ゲストからのアクションのリスニング開始
       listenToGuestActions();
-
-      showToast("部屋が作成されました！", "success");
     }).catch(err => {
       console.error("Firebase Create Room Error:", err);
-      let errorMsg = "部屋の作成に失敗しました: " + err.message;
-      if (window.location.protocol === 'file:') {
-        errorMsg += " (※ローカルファイル[file://]からはFirebaseの通信が制限される場合があります。簡易サーバー経由で起動するか、GitHub Pages上でお試しください)";
-      }
-      showToast(errorMsg, "warning");
+      showToast("通信対戦機能が利用できません。AIとのみ対戦できます。", "warning");
     });
   }).catch(err => {
     console.error("Firebase createRoom check error:", err);
-    let errorMsg = "部屋の作成に失敗しました: " + err.message;
-    if (window.location.protocol === 'file:') {
-      errorMsg += " (※ローカルファイル[file://]からはFirebaseの通信が制限される場合があります。簡易サーバー経由で起動するか、GitHub Pages上でお試しください)";
-    }
-    showToast(errorMsg, "warning");
+    showToast("通信対戦機能が利用できません。AIとのみ対戦できます。", "warning");
   });
+}
+
+// Firebase同期の再試行用 (ID重複時のみ使用)
+function createRoomFirebaseSync(hostName) {
+  const roomRef = db.ref(`rooms/${roomId}`);
+  const initialData = {
+    metadata: { hostId: myPlayerId, status: 'lobby', aiCount: aiCount, createdAt: firebase.database.ServerValue.TIMESTAMP },
+    players: { [myPlayerId]: { id: myPlayerId, name: hostName, joinedAt: firebase.database.ServerValue.TIMESTAMP } },
+    state: {},
+    actions: {}
+  };
+  roomRef.once('value').then((snapshot) => {
+    if (snapshot.exists()) { roomId = Math.floor(100000 + Math.random() * 900000).toString(); createRoomFirebaseSync(hostName); return; }
+    roomRef.set(initialData).then(() => {
+      roomRef.onDisconnect().remove();
+      listenToPlayersList();
+      listenToGuestActions();
+    }).catch(err => { console.error("Firebase sync retry error:", err); });
+  }).catch(err => { console.error("Firebase sync retry check error:", err); });
 }
 
 // ホスト：待機プレイヤーリストの監視
