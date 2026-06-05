@@ -141,8 +141,12 @@ function createRoom() {
 
       showToast("部屋が作成されました！", "success");
     }).catch(err => {
-      console.error(err);
-      showToast("部屋の作成に失敗しました。", "warning");
+      console.error("Firebase Create Room Error:", err);
+      let errorMsg = "部屋の作成に失敗しました: " + err.message;
+      if (window.location.protocol === 'file:') {
+        errorMsg += " (※ローカルファイル[file://]からはFirebaseの通信が制限される場合があります。簡易サーバー経由で起動するか、GitHub Pages上でお試しください)";
+      }
+      showToast(errorMsg, "warning");
     });
   });
 }
@@ -326,6 +330,13 @@ function joinRoom() {
       console.error(err);
       showToast("部屋への参加に失敗しました。", "warning");
     });
+  }).catch(err => {
+    console.error("Firebase Join Room Connection Error:", err);
+    let errorMsg = "部屋へのアクセスに失敗しました: " + err.message;
+    if (window.location.protocol === 'file:') {
+      errorMsg += " (※ローカルファイル[file://]からはFirebaseの通信が制限される場合があります。簡易サーバー経由で起動するか、GitHub Pages上でお試しください)";
+    }
+    showToast(errorMsg, "warning");
   });
 }
 
