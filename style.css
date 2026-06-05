@@ -954,6 +954,8 @@ body {
 .hand-container .uno-card {
   position: absolute;
   bottom: 0;
+  left: 50%;
+  margin-left: calc(var(--card-width) / -2);
   transform-origin: bottom center;
 }
 
