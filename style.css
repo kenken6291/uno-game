@@ -1300,11 +1300,11 @@ body {
   }
 
   /* Show landscape warning in portrait mode on mobile */
-  @media (orientation: portrait) {
+  /* @media (orientation: portrait) {
     .orientation-warning {
-      display: flex; /* Force rotate to landscape for better card table gameplay */
+      display: flex; 
     }
-  }
+  } */
 
   .play-table {
     grid-template-columns: 80px 1fr 80px;
