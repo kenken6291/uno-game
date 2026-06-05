@@ -10,6 +10,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyDGasDLZngBwI6QyK_NsCh2tsmX3xlLqu0",
   authDomain: "uno-game-70a90.firebaseapp.com",
   projectId: "uno-game-70a90",
+  databaseURL: "https://uno-game-70a90-default-rtdb.asia-southeast1.firebasedatabase.app",
   storageBucket: "uno-game-70a90.firebasestorage.app",
   messagingSenderId: "18245883917",
   appId: "1:18245883917:web:c59753f063dae5bc105d44"
