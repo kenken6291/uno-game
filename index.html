@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>NEON UNO MULTIPLAYER</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Outfit:wght@400;600;800;900&display=swap" rel="stylesheet">
+  <!-- FontAwesome for Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Firebase SDK (Compat Version for Vanilla JS) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="style.css?v=5">
+</head>
+<body>
+
+  <!-- Background Canvas/Effects -->
+  <div class="bg-gradient"></div>
+  <div class="glow-orb orb-1"></div>
+  <div class="glow-orb orb-2"></div>
+
+  <!-- Main Container -->
+  <div id="app">
+    
+    <!-- LOBBY SCREEN -->
+    <section id="lobby-screen" class="screen active">
+      <div class="lobby-card">
+        <h1 class="logo">NEON<span class="highlight">UNO</span></h1>
+        <p class="subtitle">次世代通信対戦＆AIマルチプレイヤーカードゲーム</p>
+
+        <!-- Step 1: User Profile -->
+        <div class="form-group">
+          <label for="player-name"><i class="fa-solid fa-user"></i> プレイヤー名</label>
+          <input type="text" id="player-name" placeholder="プレイヤー名を入力" maxlength="10">
+        </div>
+
+        <div class="tab-container">
+          <button class="tab-btn active" onclick="switchLobbyTab('create')">部屋を作る (ホスト)</button>
+          <button class="tab-btn" onclick="switchLobbyTab('join')">部屋に入る (ゲスト)</button>
+        </div>
+
+        <!-- Create Room Tab -->
+        <div id="tab-create" class="tab-content active">
+          <div class="form-group">
+            <label for="ai-count"><i class="fa-solid fa-robot"></i> コンピュータの人数 (AI)</label>
+            <div class="number-selector">
+              <button onclick="adjustAICount(-1)">-</button>
+              <span id="ai-count-val">3</span>
+              <button onclick="adjustAICount(1)">+</button>
+            </div>
+            <p class="hint">残りの枠 (最大<span id="max-guests">3</span>名) は他の通信プレイヤーが参加できます。</p>
+          </div>
+          <button id="btn-create-room" class="btn-primary" onclick="createRoom()">
+            <span class="btn-text">部屋を作成する</span>
+            <i class="fa-solid fa-plus"></i>
+          </button>
+        </div>
+
+        <!-- Join Room Tab -->
+        <div id="tab-join" class="tab-content">
+          <div class="form-group">
+            <label for="join-room-id"><i class="fa-solid fa-key"></i> 部屋ID (6桁の数字)</label>
+            <input type="text" id="join-room-id" placeholder="ホストから共有された6桁の数字を入力">
+          </div>
+          <button id="btn-join-room" class="btn-primary" onclick="joinRoom()">
+            <span class="btn-text">部屋に入る</span>
+            <i class="fa-solid fa-right-to-bracket"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- WAITING ROOM (Inside Lobby Card if hosting/joining) -->
+      <div id="waiting-room" class="lobby-card hidden">
+        <h2 class="section-title">待機室 <span id="room-status-badge" class="badge">接続中...</span></h2>
+        
+        <div class="room-id-box">
+          <span class="label">部屋ID:</span>
+          <code id="display-room-id">--------</code>
+          <button onclick="copyRoomID()" title="IDをコピー"><i class="fa-regular fa-copy"></i></button>
+        </div>
+
+        <div class="player-list-container">
+          <h3>参加プレイヤー (<span id="connected-count">1</span>/4)</h3>
+          <ul id="player-list">
+            <!-- Dynamically populated -->
+          </ul>
+        </div>
+
+        <div class="lobby-actions">
+          <button id="btn-start-game" class="btn-primary hidden" onclick="startGame()">
+            <span class="btn-text">ゲームを開始する</span>
+            <i class="fa-solid fa-play"></i>
+          </button>
+          <button class="btn-secondary" onclick="leaveLobby()">
+            <i class="fa-solid fa-arrow-left"></i> 戻る
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- GAME SCREEN -->
+    <section id="game-screen" class="screen">
+      
+      <!-- Top Bar (Game Header) -->
+      <div class="game-header">
+        <button class="header-btn" onclick="confirmExitGame()"><i class="fa-solid fa-door-open"></i> 退出</button>
+        <div class="direction-indicator" id="game-direction">
+          <i class="fa-solid fa-rotate-right clockwise"></i>
+          <span id="direction-text">時計回り</span>
+        </div>
+        <div class="status-indicator">
+          <span id="connection-status"><i class="fa-solid fa-circle text-success"></i> オンライン</span>
+        </div>
+      </div>
+
+      <!-- Main Play Table -->
+      <div class="play-table">
+        
+        <!-- Player 3 (Top - Opposite) -->
+        <div class="player-slot player-top" id="player-slot-2">
+          <div class="player-avatar">
+            <div class="avatar-icon"><i class="fa-solid fa-user-tie"></i></div>
+            <div class="turn-border"></div>
+          </div>
+          <div class="player-info">
+            <span class="name">Player 3</span>
+            <span class="card-count-badge"><i class="fa-solid fa-clone"></i> <span class="count">0</span></span>
+            <span class="uno-badge hidden">UNO!</span>
+          </div>
+        </div>
+
+        <!-- Player 2 (Left - Counter-Clockwise) -->
+        <div class="player-slot player-left" id="player-slot-1">
+          <div class="player-avatar">
+            <div class="avatar-icon"><i class="fa-solid fa-user-ninja"></i></div>
+            <div class="turn-border"></div>
+          </div>
+          <div class="player-info">
+            <span class="name">Player 2</span>
+            <span class="card-count-badge"><i class="fa-solid fa-clone"></i> <span class="count">0</span></span>
+            <span class="uno-badge hidden">UNO!</span>
+          </div>
+        </div>
+
+        <!-- Player 4 (Right - Clockwise) -->
+        <div class="player-slot player-right" id="player-slot-3">
+          <div class="player-avatar">
+            <div class="avatar-icon"><i class="fa-solid fa-user-astronaut"></i></div>
+            <div class="turn-border"></div>
+          </div>
+          <div class="player-info">
+            <span class="name">Player 4</span>
+            <span class="card-count-badge"><i class="fa-solid fa-clone"></i> <span class="count">0</span></span>
+            <span class="uno-badge hidden">UNO!</span>
+          </div>
+        </div>
+
+        <!-- Center Area (Deck & Discard Pile) -->
+        <div class="table-center">
+          
+          <!-- Draw Pile (Deck) -->
+          <div class="deck-slot" id="draw-pile" onclick="drawCardAction()">
+            <div class="card-back-mesh">
+              <span class="uno-logo-s">UNO</span>
+            </div>
+            <span class="deck-count" id="deck-count">108</span>
+          </div>
+
+          <!-- Discard Pile (Top Card) -->
+          <div class="discard-slot" id="discard-pile">
+            <!-- The top card will be rendered here dynamically -->
+          </div>
+
+          <!-- Wild Color Indicator -->
+          <div class="current-color-indicator hidden" id="color-indicator">
+            <span class="indicator-label">指定色:</span>
+            <div class="color-dot" id="color-dot"></div>
+          </div>
+        </div>
+
+        <!-- Player 1 (Bottom - Local Player) -->
+        <div class="player-slot player-bottom active-turn" id="player-slot-0">
+          <div class="player-avatar">
+            <div class="avatar-icon"><i class="fa-solid fa-user-gear"></i></div>
+            <div class="turn-border"></div>
+          </div>
+          <div class="player-info">
+            <span class="name">あなた</span>
+            <span class="uno-badge hidden">UNO!</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Action Area for Local Player -->
+      <div class="action-dock">
+        <!-- Message Box -->
+        <div id="game-message" class="game-message">あなたのターンです！カードを出すか山札を引いてください。</div>
+        
+        <div class="button-group">
+          <button id="btn-declare-uno" class="btn-action uno-btn" onclick="declareUnoAction()">
+            <i class="fa-solid fa-bullhorn"></i> UNOを宣言
+          </button>
+        </div>
+      </div>
+
+      <!-- Local Player's Hand Container -->
+      <div class="hand-container-outer">
+        <div class="hand-container" id="local-hand">
+          <!-- Dynamically populated cards -->
+        </div>
+      </div>
+      
+    </section>
+  </div>
+
+  <!-- MODAL: Wild Color Selector -->
+  <div id="color-select-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h2>色を選択してください</h2>
+      <p>ワイルドカードがプレイされました。場の色を指定してください。</p>
+      <div class="color-grid">
+        <button class="color-choice btn-red" onclick="selectColor('red')">赤</button>
+        <button class="color-choice btn-blue" onclick="selectColor('blue')">青</button>
+        <button class="color-choice btn-green" onclick="selectColor('green')">緑</button>
+        <button class="color-choice btn-yellow" onclick="selectColor('yellow')">黄</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Game Over / Results -->
+  <div id="results-modal" class="modal-overlay hidden">
+    <div class="modal-card results-card">
+      <h2 id="winner-title">勝者: プレイヤー名</h2>
+      <p id="winner-msg">おめでとうございます！あなたが勝利しました！</p>
+      
+      <div class="scoreboard-container">
+        <h3>最終手札枚数</h3>
+        <table class="scoreboard-table">
+          <thead>
+            <tr>
+              <th>順位</th>
+              <th>プレイヤー</th>
+              <th>残り枚数</th>
+            </tr>
+          </thead>
+          <tbody id="scoreboard-rows">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+      </div>
+
+      <button class="btn-primary" onclick="backToLobby()"><i class="fa-solid fa-house"></i> ロビーに戻る</button>
+    </div>
+  </div>
+
+  <!-- Toast Notification Overlay -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Screen Alert Overlay (For Special Card Effects) -->
+  <div id="effect-overlay" class="effect-overlay hidden">
+    <div class="effect-content" id="effect-text">SKIP!</div>
+  </div>
+
+  <!-- Custom Alert for Desktop/Mobile Orientation -->
+  <div id="orientation-warning" class="orientation-warning">
+    <div class="warning-content">
+      <i class="fa-solid fa-rotate-left rotate-icon"></i>
+      <p>画面を横向きに回転するか、ウィンドウサイズを調整して最適な表示でお楽しみください。</p>
+    </div>
+  </div>
+
+  <!-- Game Logic & Network scripts -->
+  <script src="game.js?v=5"></script>
+  <script src="network.js?v=5"></script>
+</body>
+</html>
